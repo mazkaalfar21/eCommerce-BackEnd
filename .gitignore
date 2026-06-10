@@ -1,0 +1,7 @@
+node_modules/
+.env
+logs/
+uploads/produk/*
+uploads/brand/*
+!uploads/produk/.gitkeep
+!uploads/brand/.gitkeep
