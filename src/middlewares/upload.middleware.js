@@ -1,6 +1,6 @@
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const path   = require('path');
+const fs     = require('fs');
 
 const createStorage = (folder) => {
   const dir = path.join(__dirname, `../../uploads/${folder}`);
@@ -8,7 +8,7 @@ const createStorage = (folder) => {
 
   return multer.diskStorage({
     destination: (req, file, cb) => cb(null, dir),
-    filename: (req, file, cb) => {
+    filename:    (req, file, cb) => {
       const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
       cb(null, `${unique}${path.extname(file.originalname)}`);
     },
@@ -16,30 +16,33 @@ const createStorage = (folder) => {
 };
 
 const fileFilter = (req, file, cb) => {
-  const allowed = /jpeg|jpg|png|gif|webp/;
-  const ext = allowed.test(path.extname(file.originalname).toLowerCase());
-  const mime = allowed.test(file.mimetype);
-  if (ext && mime) return cb(null, true);
+  const allowed   = /jpeg|jpg|png|gif|webp/;
+  const validExt  = allowed.test(path.extname(file.originalname).toLowerCase());
+  const validMime = allowed.test(file.mimetype);
+
+  if (validExt && validMime) return cb(null, true);
   cb(new Error('Hanya file gambar yang diizinkan (jpeg, jpg, png, gif, webp)'));
 };
 
 const uploadProduk = multer({
-  storage: createStorage('produk'),
+  storage:    createStorage('produk'),
   fileFilter,
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 },
 }).single('gambar');
 
 const uploadBrand = multer({
-  storage: createStorage('brand'),
+  storage:    createStorage('brand'),
   fileFilter,
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 },
 }).single('logo');
 
+// Wrapper untuk menangani error multer secara terpusat
 const handleUpload = (uploader) => (req, res, next) => {
   uploader(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
-    } else if (err) {
+    }
+    if (err) {
       return res.status(400).json({ success: false, message: err.message });
     }
     next();
@@ -48,5 +51,5 @@ const handleUpload = (uploader) => (req, res, next) => {
 
 module.exports = {
   uploadProduk: handleUpload(uploadProduk),
-  uploadBrand: handleUpload(uploadBrand),
+  uploadBrand:  handleUpload(uploadBrand),
 };

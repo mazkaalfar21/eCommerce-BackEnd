@@ -1,4 +1,4 @@
-const { Order, OrderDetail, Produk, User, Brand, Kategori, Ukuran, ProdukUkuran, sequelize } = require('../models');
+const { Order, OrderDetail, Produk, User, Brand, sequelize } = require('../models');
 
 const includeDetail = {
   model: OrderDetail,
@@ -7,21 +7,18 @@ const includeDetail = {
     {
       model: Produk,
       as: 'produk',
-      include: [
-        {
-          model: Brand,
-          as: 'brand'
-        }
-      ]
-    }
-  ]
+      include: [{ model: Brand, as: 'brand' }],
+    },
+  ],
 };
 
-// GET semua order (admin) / order milik user (customer)
+// GET /api/order
+// Admin: semua order | Customer: hanya order milik sendiri
 const getAll = async (req, res, next) => {
   try {
-    const where = req.user.role === 'customer' ? { user_id: req.user.id } : {};
     const { status, page = 1, limit = 10 } = req.query;
+
+    const where = req.user.role === 'customer' ? { user_id: req.user.id } : {};
     if (status) where.status = status;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -32,22 +29,31 @@ const getAll = async (req, res, next) => {
         includeDetail,
       ],
       order: [['createdAt', 'DESC']],
-      limit: parseInt(limit),
+      limit:  parseInt(limit),
       offset,
     });
 
     res.json({
       success: true,
       data: rows,
-      pagination: { total: count, page: parseInt(page), limit: parseInt(limit), totalPages: Math.ceil(count / parseInt(limit)) },
+      pagination: {
+        total:      count,
+        page:       parseInt(page),
+        limit:      parseInt(limit),
+        totalPages: Math.ceil(count / parseInt(limit)),
+      },
     });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 };
 
-// GET order by ID
+// GET /api/order/:id
 const getById = async (req, res, next) => {
   try {
     const where = { id: req.params.id };
+
+    // Customer tidak bisa lihat order milik user lain
     if (req.user.role === 'customer') where.user_id = req.user.id;
 
     const order = await Order.findOne({
@@ -58,70 +64,65 @@ const getById = async (req, res, next) => {
       ],
     });
 
-    if (!order) return res.status(404).json({ success: false, message: 'Order tidak ditemukan' });
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order tidak ditemukan' });
+    }
     res.json({ success: true, data: order });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 };
 
-// POST checkout - dengan Database Transaction
+// POST /api/order/checkout
+// Menggunakan database transaction agar stok & data order tetap konsisten
 const checkout = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
     const { items, alamat_pengiriman, catatan } = req.body;
-    // items: [{ produk_id, qty }]
 
     if (!items || items.length === 0) {
       await transaction.rollback();
       return res.status(400).json({ success: false, message: 'Keranjang kosong' });
     }
 
-    let total_harga = 0;
+    let total_harga    = 0;
     const orderDetails = [];
 
     for (const item of items) {
       const produk = await Produk.findByPk(item.produk_id, { transaction, lock: true });
+
       if (!produk) {
         await transaction.rollback();
-        return res.status(404).json({ success: false, message: `Produk ID ${item.produk_id} tidak ditemukan` });
+        return res.status(404).json({
+          success: false,
+          message: `Produk ID ${item.produk_id} tidak ditemukan`,
+        });
       }
 
       if (produk.stok < item.qty) {
         await transaction.rollback();
-
         return res.status(400).json({
           success: false,
-          message: `Stok "${produk.nama_produk}" tidak cukup (sisa: ${produk.stok})`
+          message: `Stok "${produk.nama_produk}" tidak cukup (sisa: ${produk.stok})`,
         });
       }
 
-      const subtotal = parseFloat(produk.harga) * item.qty;
-      total_harga += subtotal;
-
-      orderDetails.push({
-        produk_id: item.produk_id,
-        qty: item.qty,
-        harga: produk.harga
-      });
-
-      await produk.update(
-        {
-          stok: produk.stok - item.qty
-        },
-        { transaction }
-      );
+      total_harga += parseFloat(produk.harga) * item.qty;
+      orderDetails.push({ produk_id: item.produk_id, qty: item.qty, harga: produk.harga });
+      await produk.update({ stok: produk.stok - item.qty }, { transaction });
     }
 
-    // Insert Order
     const order = await Order.create({
-      user_id: req.user.id,
+      user_id:           req.user.id,
       total_harga,
       alamat_pengiriman: alamat_pengiriman || req.user.alamat,
       catatan,
     }, { transaction });
 
-    // Insert Order Details
-    const details = orderDetails.map(d => ({ ...d, order_id: order.id }));
-    await OrderDetail.bulkCreate(details, { transaction });
+    await OrderDetail.bulkCreate(
+      orderDetails.map((d) => ({ ...d, order_id: order.id })),
+      { transaction }
+    );
 
     await transaction.commit();
 
@@ -133,19 +134,22 @@ const checkout = async (req, res, next) => {
   }
 };
 
-// PUT update status order (admin)
+// PUT /api/order/status/:id (admin)
 const updateStatus = async (req, res, next) => {
   try {
     const order = await Order.findByPk(req.params.id);
-    if (!order) return res.status(404).json({ success: false, message: 'Order tidak ditemukan' });
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order tidak ditemukan' });
+    }
 
     const { status } = req.body;
     const validStatus = ['pending', 'diproses', 'dikirim', 'selesai', 'dibatalkan'];
+
     if (!validStatus.includes(status)) {
       return res.status(400).json({ success: false, message: 'Status tidak valid' });
     }
 
-    // Jika dibatalkan, kembalikan stok
+    // Jika dibatalkan, kembalikan stok semua produk
     if (status === 'dibatalkan' && order.status !== 'dibatalkan') {
       const transaction = await sequelize.transaction();
       try {
@@ -165,10 +169,12 @@ const updateStatus = async (req, res, next) => {
     }
 
     res.json({ success: true, message: 'Status order diperbarui', data: order });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 };
 
-// DELETE order (admin)
+// DELETE /api/order/:id (admin)
 const remove = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
@@ -178,7 +184,7 @@ const remove = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Order tidak ditemukan' });
     }
 
-    // Jika order belum dibatalkan, kembalikan stok dulu
+    // Kembalikan stok jika order belum berstatus 'dibatalkan'
     if (order.status !== 'dibatalkan') {
       const details = await OrderDetail.findAll({ where: { order_id: order.id }, transaction });
       for (const detail of details) {
@@ -187,7 +193,6 @@ const remove = async (req, res, next) => {
       }
     }
 
-    // Hapus order details dulu, lalu order
     await OrderDetail.destroy({ where: { order_id: order.id }, transaction });
     await order.destroy({ transaction });
     await transaction.commit();
@@ -199,7 +204,7 @@ const remove = async (req, res, next) => {
   }
 };
 
-// POST create order manual (admin)
+// POST /api/order/manual (admin)
 const createManual = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
@@ -210,28 +215,43 @@ const createManual = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Items tidak boleh kosong' });
     }
 
-    let total_harga = 0;
+    let total_harga    = 0;
     const orderDetails = [];
 
     for (const item of items) {
       const produk = await Produk.findByPk(item.produk_id, { transaction, lock: true });
+
       if (!produk) {
         await transaction.rollback();
-        return res.status(404).json({ success: false, message: `Produk ID ${item.produk_id} tidak ditemukan` });
-      }
-      if (produk.stok < item.qty) {
-        await transaction.rollback();
-        return res.status(400).json({ success: false, message: `Stok "${produk.nama_produk}" tidak cukup (sisa: ${produk.stok})` });
+        return res.status(404).json({
+          success: false,
+          message: `Produk ID ${item.produk_id} tidak ditemukan`,
+        });
       }
 
-      const subtotal = parseFloat(produk.harga) * item.qty;
-      total_harga += subtotal;
+      if (produk.stok < item.qty) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Stok "${produk.nama_produk}" tidak cukup (sisa: ${produk.stok})`,
+        });
+      }
+
+      total_harga += parseFloat(produk.harga) * item.qty;
       orderDetails.push({ produk_id: item.produk_id, qty: item.qty, harga: produk.harga });
       await produk.update({ stok: produk.stok - item.qty }, { transaction });
     }
 
-    const order = await Order.create({ user_id, total_harga, alamat_pengiriman, catatan, status }, { transaction });
-    await OrderDetail.bulkCreate(orderDetails.map(d => ({ ...d, order_id: order.id })), { transaction });
+    const order = await Order.create(
+      { user_id, total_harga, alamat_pengiriman, catatan, status },
+      { transaction }
+    );
+
+    await OrderDetail.bulkCreate(
+      orderDetails.map((d) => ({ ...d, order_id: order.id })),
+      { transaction }
+    );
+
     await transaction.commit();
 
     const result = await Order.findByPk(order.id, { include: [includeDetail] });

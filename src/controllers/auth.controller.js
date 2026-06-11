@@ -1,6 +1,6 @@
-const jwt = require('jsonwebtoken');
+const jwt    = require('jsonwebtoken');
 const { User } = require('../models');
-const logger = require('../middlewares/logger');
+const logger   = require('../middlewares/logger');
 
 const generateToken = (user) => {
   return jwt.sign(
@@ -10,6 +10,7 @@ const generateToken = (user) => {
   );
 };
 
+// POST /api/auth/register
 const register = async (req, res, next) => {
   try {
     const { nama, email, password, alamat, telepon } = req.body;
@@ -19,10 +20,11 @@ const register = async (req, res, next) => {
       return res.status(409).json({ success: false, message: 'Email sudah terdaftar' });
     }
 
-    const user = await User.create({ nama, email, password, alamat, telepon, role: 'customer' });
+    const user  = await User.create({ nama, email, password, alamat, telepon, role: 'customer' });
     const token = generateToken(user);
 
     logger.info(`User baru terdaftar: ${email}`);
+
     res.status(201).json({
       success: true,
       message: 'Registrasi berhasil',
@@ -33,6 +35,7 @@ const register = async (req, res, next) => {
   }
 };
 
+// POST /api/auth/login
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -60,10 +63,13 @@ const login = async (req, res, next) => {
   }
 };
 
-const logout = (req, res) => {
+// POST /api/auth/logout
+// Token JWT bersifat stateless
+const logout = (_req, res) => {
   res.json({ success: true, message: 'Logout berhasil' });
 };
 
+// GET /api/auth/profile
 const getProfile = async (req, res, next) => {
   try {
     res.json({ success: true, data: req.user });
@@ -72,6 +78,7 @@ const getProfile = async (req, res, next) => {
   }
 };
 
+// PUT /api/auth/profile
 const updateProfile = async (req, res, next) => {
   try {
     const { nama, alamat, telepon } = req.body;

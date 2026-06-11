@@ -1,6 +1,7 @@
-const { User, Produk, Order, OrderDetail, sequelize } = require('../models');
-const { Op, fn, col, literal } = require('sequelize');
+const { User, Produk, Order, OrderDetail } = require('../models');
+const { Op, fn, col } = require('sequelize');
 
+// GET /api/dashboard/summary
 const getSummary = async (req, res, next) => {
   try {
     const [totalProduk, totalUser, totalOrder, pendapatan] = await Promise.all([
@@ -11,7 +12,10 @@ const getSummary = async (req, res, next) => {
     ]);
 
     const orderByStatus = await Order.findAll({
-      attributes: ['status', [fn('COUNT', col('id')), 'total']],
+      attributes: [
+        'status',
+        [fn('COUNT', col('id')), 'total'],
+      ],
       group: ['status'],
     });
 
@@ -25,18 +29,21 @@ const getSummary = async (req, res, next) => {
         orderByStatus,
       },
     });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 };
 
+// GET /api/dashboard/chart
 const getChart = async (req, res, next) => {
   try {
-    // Penjualan per bulan (12 bulan terakhir)
+    // Penjualan per bulan selama 12 bulan terakhir
     const penjualanBulanan = await Order.findAll({
       attributes: [
         [fn('MONTH', col('tanggal_order')), 'bulan'],
-        [fn('YEAR', col('tanggal_order')), 'tahun'],
-        [fn('SUM', col('total_harga')), 'total'],
-        [fn('COUNT', col('id')), 'jumlah_order'],
+        [fn('YEAR',  col('tanggal_order')), 'tahun'],
+        [fn('SUM',   col('total_harga')),   'total'],
+        [fn('COUNT', col('id')),            'jumlah_order'],
       ],
       where: {
         status: { [Op.in]: ['selesai', 'dikirim'] },
@@ -45,10 +52,13 @@ const getChart = async (req, res, next) => {
         },
       },
       group: [fn('YEAR', col('tanggal_order')), fn('MONTH', col('tanggal_order'))],
-      order: [[fn('YEAR', col('tanggal_order')), 'ASC'], [fn('MONTH', col('tanggal_order')), 'ASC']],
+      order: [
+        [fn('YEAR',  col('tanggal_order')), 'ASC'],
+        [fn('MONTH', col('tanggal_order')), 'ASC'],
+      ],
     });
 
-    // Produk terlaris (top 5)
+    // Top 5 produk terlaris berdasarkan total qty terjual
     const produkTerlaris = await OrderDetail.findAll({
       attributes: [
         'produk_id',
@@ -64,7 +74,9 @@ const getChart = async (req, res, next) => {
       success: true,
       data: { penjualanBulanan, produkTerlaris },
     });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 };
 
 module.exports = { getSummary, getChart };
